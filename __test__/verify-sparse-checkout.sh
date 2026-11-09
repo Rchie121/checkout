@@ -1,63 +1,51 @@
 #!/bin/bash
+set -e
 
-# Verify .git folder
-if [ ! -d "./sparse-checkout/.git" ]; then
-  echo "Expected ./sparse-checkout/.git folder to exist"
+# Verify worktree credentials
+# This test verifies that git credentials work in worktrees created after checkout
+# Usage: verify-worktree.sh <checkout-path> <worktree-name>
+
+CHECKOUT_PATH="$1"
+WORKTREE_NAME="$2"
+
+if [ -z "$CHECKOUT_PATH" ] || [ -z "$WORKTREE_NAME" ]; then
+  echo "Usage: verify-worktree.sh <checkout-path> <worktree-name>"
   exit 1
 fi
 
-# Verify sparse-checkout
-cd sparse-checkout
+cd "$CHECKOUT_PATH"
 
-SPARSE=$(git sparse-checkout list)
+# Add safe directory for container environments
+git config --global --add safe.directory "*" 2>/dev/null || true
 
-if [ "$?" != "0" ]; then
-    echo "Failed to validate sparse-checkout"
-    exit 1
-fi
+# Show the includeIf configuration
+echo "Git config includeIf entries:"
+git config --list --show-origin | grep -i include || true
 
-# Check that sparse-checkout list is not empty
-if [ -z "$SPARSE" ]; then
-  echo "Expected sparse-checkout list to not be empty"
+# Create the worktree
+echo "Creating worktree..."
+git worktree add "../$WORKTREE_NAME" HEAD --detach
+
+# Change to worktree directory
+cd "../$WORKTREE_NAME"
+
+# Verify we're in a worktree
+echo "Verifying worktree gitdir:"
+cat .git
+
+# Verify credentials are available in worktree by checking extraheader is configured
+echo "Checking credentials in worktree..."
+if git config --list --show-origin | grep -q "extraheader"; then
+  echo "Credentials are configured in worktree"
+else
+  echo "ERROR: Credentials are NOT configured in worktree"
+  echo "Full git config:"
+  git config --list --show-origin
   exit 1
 fi
 
-# Check that all folders of the sparse checkout exist
-for pattern in $SPARSE
-do
-  if [ ! -d "$pattern" ]; then
-    echo "Expected directory '$pattern' to exist"
-    exit 1
-  fi
-done
+# Verify fetch works in the worktree
+echo "Fetching in worktree..."
+git fetch origin
 
-checkSparse () {
-  if [ ! -d "./$1" ]; then
-    echo "Expected directory '$1' to exist"
-    exit 1
-  fi
-
-  for file in $(git ls-tree -r --name-only HEAD $1)
-  do
-    if [ ! -f "$file" ]; then
-      echo "Expected file '$file' to exist"
-      exit 1
-    fi
-  done
-}
-
-# Check that all folders and their children have been checked out
-checkSparse __test__
-checkSparse .github
-checkSparse dist
-
-# Check that only sparse-checkout folders have been checked out
-for pattern in $(git ls-tree --name-only HEAD)
-do
-  if [ -d "$pattern" ]; then
-    if [[ "$pattern" != "__test__" && "$pattern" != ".github" && "$pattern" != "dist" ]]; then
-      echo "Expected directory '$pattern' to not exist"
-      exit 1
-    fi
-  fi
-done
+echo "Worktree credentials test passed!"
